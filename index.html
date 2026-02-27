@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Flappy Plane</title>
+
+<link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flappy Plane">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<style>
+body{
+  margin:0;
+  overflow:hidden;
+  background:#111;
+  font-family:monospace;
+}
+canvas{ display:block; }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+function resizeCanvas(){
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+resizeCanvas();
+window.addEventListener("resize", resizeCanvas);
+
+let state = "menu";
+let score = 0;
+let highScore = parseInt(localStorage.getItem("flappyHighScore")) || 0;
+
+let plane = {
+  x: window.innerWidth * 0.25,
+  y: window.innerHeight * 0.3,
+  width: 40,
+  height: 12,
+  velocity: 0,
+  gravity: 0.5,
+  lift: -7
+};
+
+let propSpin = 0;
+let cubes = [];
+let gameSpeed = 5;
+
+let shakeTime = 0;
+let particles = [];
+
+/* ===== Explosion ===== */
+function explode(x, y){
+  for(let i=0;i<25;i++){
+    particles.push({
+      x:x,
+      y:y,
+      vx:(Math.random()-0.5)*10,
+      vy:(Math.random()-0.5)*10,
+      life:30
+    });
+  }
+  shakeTime = 15;
+}
+
+function crash(){
+  explode(plane.x+plane.width/2,plane.y+plane.height/2);
+
+  setTimeout(()=>{
+    state="menu";
+    if(score>highScore){
+      highScore=score;
+      localStorage.setItem("flappyHighScore",highScore);
+    }
+    resetGame();
+  },300);
+}
+
+/* ===== Music ===== */
+let audioCtx;
+function startMusic(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const melody=[659,784,988,784,659,784,1047,784];
+  const bass=[110,110,147,110,98,110,147,110];
+  let step=0;
+
+  setInterval(()=>{
+    if(state!=="playing")return;
+    const osc=audioCtx.createOscillator();
+    const gain=audioCtx.createGain();
+    osc.type="square";
+    osc.frequency.value=melody[step%melody.length];
+    gain.gain.setValueAtTime(0.18,audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.12);
+    osc.connect(gain);gain.connect(audioCtx.destination);
+    osc.start();osc.stop(audioCtx.currentTime+0.12);
+  },130);
+
+  setInterval(()=>{
+    if(state!=="playing")return;
+    const osc=audioCtx.createOscillator();
+    const gain=audioCtx.createGain();
+    osc.type="triangle";
+    osc.frequency.value=bass[step%bass.length];
+    gain.gain.setValueAtTime(0.25,audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.25);
+    osc.connect(gain);gain.connect(audioCtx.destination);
+    osc.start();osc.stop(audioCtx.currentTime+0.25);
+  },260);
+
+  setInterval(()=>{
+    if(state!=="playing")return;
+    const osc=audioCtx.createOscillator();
+    const gain=audioCtx.createGain();
+    osc.type="sine";
+    osc.frequency.setValueAtTime(150,audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(50,audioCtx.currentTime+0.1);
+    gain.gain.setValueAtTime(0.4,audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.1);
+    osc.connect(gain);gain.connect(audioCtx.destination);
+    osc.start();osc.stop(audioCtx.currentTime+0.1);
+    step++;
+  },260);
+}
+
+function spawnCube(){
+  let gap=200;
+  let topHeight=Math.random()*(window.innerHeight-gap-250)+120;
+  cubes.push({
+    x:window.innerWidth+80,
+    top:topHeight,
+    bottom:topHeight+gap,
+    passed:false
+  });
+}
+
+function resetGame(){
+  plane.y=window.innerHeight*0.3;
+  plane.velocity=0;
+  cubes=[];
+  score=0;
+}
+
+function drawPlane(x,y){
+  ctx.fillStyle="#f4c542";
+  ctx.fillRect(x,y,plane.width,plane.height);
+  ctx.fillStyle="#222";
+  ctx.fillRect(x+22,y+2,12,8);
+  ctx.fillStyle="#f4c542";
+  ctx.fillRect(x-10,y+3,10,6);
+  ctx.fillRect(x-10,y-6,6,8);
+  ctx.fillRect(x+6,y-6,28,4);
+  ctx.fillRect(x+6,y+plane.height,28,4);
+  ctx.save();
+  ctx.translate(x+plane.width+4,y+plane.height/2);
+  ctx.rotate(propSpin);
+  ctx.fillStyle="#aaa";
+  ctx.fillRect(-2,-12,4,24);
+  ctx.restore();
+}
+
+function update(){
+  ctx.clearRect(0,0,window.innerWidth,window.innerHeight);
+
+  if(shakeTime>0){
+    shakeTime--;
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*10,(Math.random()-0.5)*10);
+  } else {
+    ctx.save();
+  }
+
+  if(state==="menu"){
+    ctx.fillStyle="#3f7c8b";
+    ctx.fillRect(0,0,window.innerWidth,window.innerHeight);
+    ctx.fillStyle="white";
+    ctx.textAlign="center";
+    ctx.font="40px monospace";
+    ctx.fillText("FLAPPY PLANE",window.innerWidth/2,150);
+    ctx.font="20px monospace";
+    ctx.fillText("TAP TO START",window.innerWidth/2,200);
+    ctx.fillText("HIGH SCORE: "+highScore,window.innerWidth/2,240);
+    let bounce=Math.sin(Date.now()*0.004)*10;
+    propSpin+=0.25;
+    drawPlane(window.innerWidth/2-40,window.innerHeight/2+bounce);
+  }
+
+  if(state==="playing"){
+    ctx.fillStyle="#87CEEB";
+    ctx.fillRect(0,0,window.innerWidth,window.innerHeight);
+    ctx.fillStyle="#2e8b57";
+    ctx.fillRect(0,window.innerHeight-100,window.innerWidth,100);
+
+    plane.velocity+=plane.gravity;
+    plane.y+=plane.velocity;
+    propSpin+=0.4;
+    drawPlane(plane.x,plane.y);
+
+    if(cubes.length===0||cubes[cubes.length-1].x<window.innerWidth-350){
+      spawnCube();
+    }
+
+    for(let c of cubes){
+      c.x-=gameSpeed;
+      ctx.fillStyle="#444";
+      ctx.fillRect(c.x,0,80,c.top);
+      ctx.fillRect(c.x,c.bottom,80,window.innerHeight-c.bottom-100);
+
+      if(
+        plane.x+plane.width>c.x &&
+        plane.x<c.x+80 &&
+        (plane.y<c.top||plane.y+plane.height>c.bottom)
+      ){
+        crash();
+      }
+
+      if(!c.passed && c.x<plane.x){
+        score++;
+        c.passed=true;
+      }
+    }
+
+    if(plane.y>window.innerHeight-110){
+      crash();
+    }
+
+    for(let i=particles.length-1;i>=0;i--){
+      let p=particles[i];
+      p.x+=p.vx;
+      p.y+=p.vy;
+      p.life--;
+      ctx.fillStyle="orange";
+      ctx.fillRect(p.x,p.y,4,4);
+      if(p.life<=0) particles.splice(i,1);
+    }
+
+    ctx.fillStyle="white";
+    ctx.font="36px monospace";
+    ctx.textAlign="center";
+    ctx.fillText(score,window.innerWidth/2,80);
+  }
+
+  ctx.restore();
+  requestAnimationFrame(update);
+}
+
+function tap(){
+  if(state==="menu"){
+    state="playing";
+    startMusic();
+  } else {
+    plane.velocity=plane.lift;
+  }
+}
+
+window.addEventListener("touchstart",tap);
+window.addEventListener("mousedown",tap);
+
+update();
+</script>
+</body>
+</html>
